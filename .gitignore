@@ -5,3 +5,4 @@ dist
 .vscode-test-web
 *.log
 .DS_Store
+logs/

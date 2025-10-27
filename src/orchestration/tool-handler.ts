@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ToolCall, ToolResult, AgentType } from '../types';
 import { SlaveExecutor } from './slave-executor';
+import { stripTerminalNoise } from '../util/terminal';
 
 /**
  * Handle tool calls from master CLI
@@ -72,7 +73,8 @@ async function handleSlaveExecution(
       stream.markdown(`\n\n**${agent.toUpperCase()} Completed:**\n`);
 
       if (result.output) {
-        stream.markdown('```\n' + result.output.substring(0, 500) + '\n```\n');
+        const cleaned = stripTerminalNoise(result.output).substring(0, 500);
+        stream.markdown('```\n' + cleaned + '\n```\n');
       }
 
       if (result.files_modified && result.files_modified.length > 0) {
