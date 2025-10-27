@@ -1,8 +1,8 @@
 # Orka VS - Implementation Status
 
-## ✅ IMPLEMENTATION COMPLETE
+## 🚧 PARTIALLY COMPLETE - TESTING PHASE
 
-All core features have been successfully implemented and the project compiles without errors.
+**Current Status:** Code is written and compiles successfully. Basic chat functionality works. **Slave orchestration is UNTESTED and likely not working yet.**
 
 ---
 
@@ -49,37 +49,38 @@ Implemented features:
 - [x] Async tool execution
 - [x] Error handling and recovery
 
-### Phase 2C: Slave Executor Implementation ✅ COMPLETE
+### Phase 2C: Slave Executor Implementation 🚧 CODE WRITTEN - UNTESTED
 **File**: `src/orchestration/slave-executor.ts` (342 lines)
 
-Implemented features:
-- [x] Multi-agent support (Codex, Gemini, Claude)
-- [x] Terminal Shell Integration for each agent
-- [x] Independent terminal per agent type
-- [x] Task tracking and management
-- [x] Stream-based output collection
-- [x] Event-based completion detection
-- [x] Task status queries
-- [x] Execution time tracking
-- [x] File modification tracking
-- [x] Error handling per task
+Code written but NOT TESTED:
+- [x] Multi-agent support (Codex, Gemini, Claude) - CODE ONLY
+- [x] Terminal Shell Integration for each agent - CODE ONLY
+- [x] Independent terminal per agent type - CODE ONLY
+- [x] Task tracking and management - CODE ONLY
+- [x] Stream-based output collection - CODE ONLY
+- [x] Event-based completion detection - CODE ONLY
+- [ ] **Claude slave command syntax** - LIKELY WRONG (needs: --print --output-format stream-json)
+- [ ] **Codex/Gemini commands** - UNTESTED, syntax unknown
+- [ ] **End-to-end execution** - NOT TESTED
 
-### Phase 2D: Full Orchestration Flow ✅ COMPLETE
+### Phase 2D: Full Orchestration Flow 🚧 CODE WRITTEN - NOT WORKING
 **Files**:
 - `src/orchestration/tool-handler.ts` (145 lines)
 - `src/chat/master-participant.ts` (303 lines)
 
-Implemented features:
-- [x] Tool routing (execute_slave_codex, execute_slave_gemini, get_slave_status)
-- [x] Chat participant integration
-- [x] Progress indicators in chat
-- [x] Result formatting and display
-- [x] Session management across turns
-- [x] History-based session recovery
-- [x] Error display in chat
-- [x] Cancellation support
-- [x] Configuration display
-- [x] Slash commands (/status, /config, /abort)
+**CRITICAL ISSUES:**
+- [ ] **Custom tools NOT registered** - `getCustomToolsJson()` exists but not passed to Claude CLI
+- [ ] **Tool result communication** - `sendText()` in --print mode likely doesn't work
+- [ ] **Slave delegation** - Will NOT work until custom tools are registered
+
+Code written but blocked:
+- [x] Tool routing (execute_slave_codex, execute_slave_gemini, get_slave_status) - CODE ONLY
+- [x] Chat participant integration - BASIC CHAT WORKS ✅
+- [x] Progress indicators in chat - CODE ONLY
+- [x] Result formatting and display - CODE ONLY
+- [x] Session management across turns - BASIC WORKS ✅
+- [x] Error display in chat - WORKS ✅
+- [ ] Slash commands (/status, /config, /abort) - UNTESTED
 
 ### Phase 2E: Telegram Integration ✅ COMPLETE
 **File**: `src/telegram/bridge.ts` (exists)
@@ -158,25 +159,26 @@ All files compile cleanly without errors or warnings.
 
 ---
 
-## 🎯 Feature Completeness
+## 🎯 Feature Completeness - HONEST ASSESSMENT
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Master CLI Execution | ✅ Complete | Full Terminal Shell Integration |
-| Slave Agent Execution | ✅ Complete | Codex, Gemini, Claude support |
-| Tool Call Detection | ✅ Complete | JSON stream parsing |
-| Tool Result Sending | ✅ Complete | Stdin-based communication |
-| Chat Participant | ✅ Complete | Native VS Code chat |
-| Session Management | ✅ Complete | Cross-turn context |
-| Progress Indicators | ✅ Complete | Real-time status updates |
-| Error Handling | ✅ Complete | Comprehensive error display |
-| Cancellation | ✅ Complete | Token-based abort |
-| Configuration | ✅ Complete | All settings functional |
-| Telegram Bridge | ✅ Complete | Optional WebSocket server |
-| Commands | ✅ Complete | All 4 commands registered |
-| Slash Commands | ✅ Complete | /status, /config, /abort |
-| Terminal Output | ✅ Complete | ANSI stripping |
-| Debug Output | ✅ Complete | Output channel |
+| Master CLI Execution | ✅ Works | Terminal Shell Integration, stream parsing |
+| **Custom Tools Registration** | ❌ **NOT WORKING** | Tools defined but NOT passed to Claude CLI |
+| **Tool Call Detection** | 🚧 Untested | Code exists, needs live test |
+| **Tool Result Sending** | ❌ **LIKELY BROKEN** | sendText() in --print mode won't work |
+| **Slave Agent Execution** | ❌ **NOT WORKING** | Blocked by tool registration issue |
+| Chat Participant | ✅ Works | Basic chat functional |
+| Session Management | ✅ Works | Basic context preservation |
+| Progress Indicators | 🚧 Untested | Code exists |
+| Error Handling | ✅ Works | Basic errors display |
+| Cancellation | 🚧 Untested | Code exists |
+| Configuration | 🚧 Untested | Settings exist |
+| Telegram Bridge | 🚧 Untested | Code exists |
+| Commands | 🚧 Untested | Registered but not tested |
+| Slash Commands | 🚧 Untested | Code exists |
+| Terminal Output | ✅ Works | ANSI stripping works |
+| Debug Output | ✅ Works | Output channel functional |
 
 ---
 
@@ -196,34 +198,38 @@ All files compile cleanly without errors or warnings.
 
 ---
 
-## 🚀 Ready for Testing
+## 🚀 NOW TESTING
 
-The extension is **ready for end-to-end testing**:
+The extension is **now in testing phase**:
+
+⚠️ **EXPECTED FAILURES:**
+- Test 4 (Slave Delegation) will FAIL - custom tools not registered
+- Test 6 (Slash commands) - untested
+- Test 7 (Status) - untested
 
 ### Testing Checklist
 
-1. **Installation Test**
+1. **Installation Test** ✅ EXPECTED TO PASS
    - [ ] Install extension in VS Code
    - [ ] Verify extension activates
    - [ ] Check output channel for activation logs
 
-2. **Basic Chat Test**
+2. **Basic Chat Test** ✅ EXPECTED TO PASS
    - [ ] Open VS Code workspace
    - [ ] Type `@orka Hello`
    - [ ] Verify Claude responds
    - [ ] Check terminal opens: "Orka Master (claude)"
 
-3. **Session Continuity Test**
-   - [ ] Send first message to @orka
-   - [ ] Note session ID in metadata
-   - [ ] Send second message
-   - [ ] Verify session continues (context preserved)
+3. **Tool Visibility Test** 🔍 CRITICAL TEST
+   - [ ] Type: `@orka What tools do you have available?`
+   - [ ] Check if Claude sees: `execute_slave_codex`, `execute_slave_gemini`, `get_slave_status`
+   - [ ] OR if only MCP tools visible: `mcp__orka-remote-https__run_subagent`, etc.
 
-4. **Slave Delegation Test**
-   - [ ] Type: `@orka Implement a hello world function. Delegate to Codex.`
-   - [ ] Verify master delegates to Codex
-   - [ ] Check slave terminal opens: "Orka Slave (Codex)"
-   - [ ] Verify result appears in chat
+4. **Slave Delegation Test** ❌ EXPECTED TO FAIL
+   - [ ] Type: `@orka Implement a hello world function in Python. Use Codex to implement this.`
+   - [ ] Verify master tries to delegate to Codex
+   - [ ] **Expected:** Tool not found error OR no delegation attempt
+   - [ ] Check Debug Console for tool call attempts
 
 5. **Error Handling Test**
    - [ ] Test with invalid command
