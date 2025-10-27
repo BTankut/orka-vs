@@ -1,0 +1,123 @@
+{
+  "name": "orka-vs",
+  "displayName": "Orka - Master/Slave AI Orchestration",
+  "description": "Native VS Code extension for orchestrating multiple AI CLI agents with master/slave architecture",
+  "version": "0.1.0",
+  "publisher": "BTankut",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "codex",
+    "gemini",
+    "ai",
+    "orchestration",
+    "telegram"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "orka.master",
+        "name": "orka",
+        "description": "Master AI planner with slave agent orchestration",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "status",
+            "description": "Check status of slave tasks"
+          },
+          {
+            "name": "abort",
+            "description": "Abort current execution"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "orka.openMasterTerminal",
+        "title": "Orka: Open Master Terminal"
+      },
+      {
+        "command": "orka.showSlaveStatus",
+        "title": "Orka: Show Slave Task Status"
+      },
+      {
+        "command": "orka.abortExecution",
+        "title": "Orka: Abort Current Execution"
+      }
+    ],
+    "configuration": {
+      "title": "Orka",
+      "properties": {
+        "orka.master.cli": {
+          "type": "string",
+          "default": "claude",
+          "enum": ["claude", "codex", "gemini"],
+          "description": "Master CLI to use for planning and orchestration"
+        },
+        "orka.slaves.available": {
+          "type": "array",
+          "default": ["codex", "gemini"],
+          "items": {
+            "type": "string",
+            "enum": ["claude", "codex", "gemini"]
+          },
+          "description": "Available slave CLI agents"
+        },
+        "orka.telegram.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Telegram integration"
+        },
+        "orka.telegram.port": {
+          "type": "number",
+          "default": 3001,
+          "description": "WebSocket port for Telegram bridge"
+        },
+        "orka.terminal.visible": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show terminal output for master and slaves"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.93.0",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0",
+    "@vscode/test-electron": "^2.3.8"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BTankut/orka-vs.git"
+  },
+  "license": "GPL-3.0"
+}
