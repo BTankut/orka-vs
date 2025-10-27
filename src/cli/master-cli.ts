@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { MasterExecutionOptions, ToolCall, ToolResult } from '../types';
+import { stripTerminalNoise } from '../util/terminal';
 
 /**
  * Master CLI Manager
@@ -9,6 +10,7 @@ export class MasterCLI {
   private terminal: vscode.Terminal | undefined;
   private currentExecution: vscode.TerminalShellExecution | undefined;
   private pendingToolCalls = new Map<string, (result: ToolResult) => void>();
+  private stdinWrite: ((data: string) => void) | undefined;
 
   constructor(private cliCommand: string = 'claude') {}
 
@@ -16,30 +18,43 @@ export class MasterCLI {
    * Execute a command using the master CLI
    */
   async execute(options: MasterExecutionOptions): Promise<void> {
+    console.log('[MasterCLI] Starting execute...');
+    await this.executeViaTerminal(options);
+  }
+
+  private async executeViaTerminal(options: MasterExecutionOptions): Promise<void> {
     // Create or reuse terminal
     if (!this.terminal || this.terminal.exitStatus) {
       const terminalVisible = vscode.workspace
         .getConfiguration('orka')
         .get('terminal.visible', true);
 
+      console.log('[MasterCLI] Creating terminal, visible:', terminalVisible);
+
       this.terminal = vscode.window.createTerminal({
         name: `Orka Master (${this.cliCommand})`,
         cwd: options.projectPath,
         hideFromUser: !terminalVisible,
       } as vscode.TerminalOptions);
+
+      console.log('[MasterCLI] Terminal created:', this.terminal.name);
     }
 
     // Wait for shell integration to be ready
+    console.log('[MasterCLI] Waiting for shell integration...');
     await this.waitForShellIntegration(this.terminal);
+    console.log('[MasterCLI] Shell integration ready!');
 
-    // Build command arguments
+    // Build command arguments (quote values for shell)
     const args = this.buildCommandArgs(options);
     const commandLine = `${this.cliCommand} ${args.join(' ')}`;
+    console.log('[MasterCLI] Terminal command:', commandLine);
 
     // Execute command
-    this.currentExecution = await this.terminal.shellIntegration!.executeCommand(
-      commandLine
-    );
+    this.currentExecution = await this.terminal.shellIntegration!.executeCommand(commandLine);
+
+    // Provide stdin writer for tools
+    this.stdinWrite = (data: string) => this.terminal?.sendText(data);
 
     // Handle cancellation
     if (options.token) {
@@ -56,23 +71,26 @@ export class MasterCLI {
    * Build command arguments for master CLI
    */
   private buildCommandArgs(options: MasterExecutionOptions): string[] {
+    const cfg = vscode.workspace.getConfiguration('orka');
+    const maxTurns = cfg.get<number>('master.maxTurns', 0);
+    const model = cfg.get<string>('master.model', '');
+
     const args: string[] = [];
 
-    // Claude-specific arguments
     if (this.cliCommand === 'claude') {
-      args.push('code', '--stream-json', '--project', options.projectPath);
-
+      args.push('--print');
+      args.push('--output-format', 'stream-json');
+      // stream-json in print mode requires --verbose; force it on
+      args.push('--verbose');
+      if (model) args.push('--model', this.escapeShellArg(model));
+      if (typeof maxTurns === 'number' && maxTurns > 0) args.push('--max-turns', String(maxTurns));
       if (options.sessionId) {
-        args.push('--session-id', options.sessionId);
+        args.push('--resume', this.escapeShellArg(options.sessionId));
       }
-
-      // Define custom tools for slave orchestration
-      args.push('--custom-tools', this.getCustomToolsJson());
     }
 
-    // Add the user command
+    // Add the user command last
     args.push(this.escapeShellArg(options.command));
-
     return args;
   }
 
@@ -147,22 +165,44 @@ export class MasterCLI {
   ): Promise<void> {
     const stream = execution.read();
     let buffer = '';
+    const nonJsonTail: string[] = [];
+    const pushTail = (line: string) => {
+      if (!line || /Shell cwd was reset/.test(line)) return;
+      nonJsonTail.push(line);
+      if (nonJsonTail.length > 40) nonJsonTail.shift();
+    };
 
-    for await (const data of stream) {
+    for await (const raw of stream) {
+      const data = stripTerminalNoise(raw);
+      console.log('[MasterCLI] raw chunk:', JSON.stringify(raw));
+      console.log('[MasterCLI] cleaned chunk:', JSON.stringify(data));
       buffer += data;
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      const parts = buffer.split('\n');
+      buffer = parts.pop() || '';
 
-      for (const line of lines) {
-        if (!line.trim()) continue;
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line) continue;
 
         try {
           const json = JSON.parse(line);
           await this.handleStreamMessage(json, options);
-        } catch (e) {
-          // Not JSON, raw output
-          options.onOutput(data);
+        } catch {
+          // Swallow non-JSON noise; log for diagnostics only
+          console.log('[MasterCLI] non-JSON output:', line.slice(0, 200));
+          pushTail(line);
         }
+      }
+    }
+
+    // Flush any trailing partial line
+    const tail = buffer.trim();
+    if (tail) {
+      try {
+        const json = JSON.parse(tail);
+        await this.handleStreamMessage(json, options);
+      } catch {
+        console.log('[MasterCLI] trailing non-JSON:', tail.slice(0, 200));
       }
     }
 
@@ -173,6 +213,9 @@ export class MasterCLI {
           disposable.dispose();
           if (e.exitCode !== 0) {
             options.onOutput(`\n\n❌ Master CLI exited with code ${e.exitCode}`);
+            if (nonJsonTail.length) {
+              options.onOutput(`\n\nLast output:\n\n\`\`\`\n${nonJsonTail.join('\n').slice(-1200)}\n\`\`\`\n`);
+            }
           }
           resolve();
         }
@@ -187,30 +230,102 @@ export class MasterCLI {
     message: any,
     options: MasterExecutionOptions
   ): Promise<void> {
+    // Debug: log all messages
+    console.log('[MasterCLI] Stream message:', JSON.stringify(message).substring(0, 200));
+
     switch (message.type) {
-      case 'chunk':
-        options.onOutput(message.data);
+      case 'stream_event':
+        // Handle wrapped partials from some CLIs
+        if (message.event?.type === 'content_block_delta' && message.event?.delta?.type === 'text_delta' && message.event?.delta?.text) {
+          options.onOutput(message.event.delta.text);
+        }
+        if (message.session_id && options.onSession) {
+          options.onSession(message.session_id);
+        }
+        break;
+
+      case 'assistant':
+        // Claude Code CLI format: assistant message with content (final summary)
+        // Fallback: if content is present, emit it to avoid truncation
+        if (message.message?.content) {
+          options.onOutput(this.flattenContent(message.message.content));
+        } else if (Array.isArray(message.content)) {
+          for (const block of message.content) {
+            options.onOutput(this.flattenContent(block));
+          }
+        }
+        if (message.session_id && options.onSession) {
+          options.onSession(message.session_id);
+        }
+        break;
+
+      case 'result':
+        // Claude Code CLI format: final result summary
+        options.onOutput(this.flattenContent(message.result));
+        if (message.is_error) {
+          options.onOutput(`\n\n❌ Error: ${message.result}`);
+        } else {
+          options.onOutput('\n\n✅ Task completed');
+        }
+        if (message.session_id && options.onSession) {
+          options.onSession(message.session_id);
+        }
+        break;
+
+      case 'content_block_delta':
+        // Standard Anthropic streaming API format
+        // Real-time text chunks come here
+        if (message.delta?.type === 'text_delta' && message.delta?.text) {
+          options.onOutput(message.delta.text);
+        } else if (message.delta?.partial_json) {
+          console.log('[MasterCLI] Tool input:', message.delta.partial_json);
+        } else if (message.delta?.thinking) {
+          console.log('[MasterCLI] Thinking:', message.delta.thinking);
+        }
+        break;
+
+      case 'content_block_start':
+      case 'content_block_stop':
+      case 'message_start':
+      case 'message_stop':
+        // Standard API events, no action needed
+        break;
+
+      case 'message_delta':
+        // Some CLI builds emit text via message_delta
+        if (message.delta?.type === 'text_delta' && typeof message.delta?.text === 'string') {
+          options.onOutput(message.delta.text);
+        }
         break;
 
       case 'tool_use':
         await this.handleToolUse(message, options);
         break;
 
-      case 'session_created':
-        // Session ID can be extracted here if needed
-        break;
-
-      case 'result':
-        options.onOutput('\n\n✅ Task completed');
+      case 'system':
+        // System messages (init, etc.)
+        console.log('[MasterCLI] System message:', message.subtype);
+        if (message.session_id && options.onSession) {
+          options.onSession(message.session_id);
+        }
         break;
 
       case 'error':
-        options.onOutput(`\n\n❌ Error: ${message.message}`);
+        options.onOutput(`\n\n❌ Error: ${message.message || message.error}`);
+        break;
+
+      case 'message':
+        if (message.message?.content) {
+          options.onOutput(this.flattenContent(message.message.content));
+        }
+        if (message.session_id && options.onSession) {
+          options.onSession(message.session_id);
+        }
         break;
 
       default:
-        // Unknown message type, just log
-        console.log('Unknown message type:', message.type);
+        // Unknown message type, log but don't show
+        console.log('[MasterCLI] Unknown message type:', message.type, message);
     }
   }
 
@@ -256,9 +371,7 @@ export class MasterCLI {
       tool_use_id: toolCallId,
       content: JSON.stringify(result),
     });
-
-    // Send to terminal stdin
-    this.terminal?.sendText(resultMessage);
+    this.stdinWrite?.(resultMessage);
   }
 
   /**
@@ -267,14 +380,22 @@ export class MasterCLI {
   private async waitForShellIntegration(
     terminal: vscode.Terminal
   ): Promise<void> {
+    console.log('[MasterCLI] Checking shell integration...');
+
     if (terminal.shellIntegration) {
+      console.log('[MasterCLI] Shell integration already available!');
       return;
     }
+
+    console.log('[MasterCLI] Shell integration not ready, waiting for event...');
 
     return new Promise((resolve, reject) => {
       const disposable = vscode.window.onDidChangeTerminalShellIntegration(
         (e) => {
+          console.log('[MasterCLI] Shell integration event received');
           if (e.terminal === terminal) {
+            console.log('[MasterCLI] Shell integration ready for our terminal!');
+            clearTimeout(timeoutHandle);
             disposable.dispose();
             resolve();
           }
@@ -282,7 +403,8 @@ export class MasterCLI {
       );
 
       // Timeout after 10 seconds
-      setTimeout(() => {
+      const timeoutHandle = setTimeout(() => {
+        console.log('[MasterCLI] Shell integration TIMEOUT!');
         disposable.dispose();
         reject(
           new Error(
@@ -322,5 +444,17 @@ export class MasterCLI {
   private escapeShellArg(arg: string): string {
     // Simple escaping for common shells
     return `"${arg.replace(/"/g, '\\"')}"`;
+  }
+
+  private flattenContent(content: any): string {
+    if (!content) return '';
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content.map((entry) => this.flattenContent(entry)).join('\n\n');
+    }
+    if (typeof content === 'object' && typeof content.text === 'string') {
+      return content.text;
+    }
+    return JSON.stringify(content);
   }
 }

@@ -5,8 +5,9 @@
   "version": "0.1.0",
   "publisher": "BTankut",
   "engines": {
-    "vscode": "^1.93.0"
+    "vscode": "^1.105.0"
   },
+  "extensionKind": ["workspace", "ui"],
   "categories": [
     "AI",
     "Chat",
@@ -20,27 +21,16 @@
     "orchestration",
     "telegram"
   ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
+  "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
     "chatParticipants": [
       {
         "id": "orka.master",
         "name": "orka",
-        "description": "Master AI planner with slave agent orchestration",
-        "isSticky": true,
-        "commands": [
-          {
-            "name": "status",
-            "description": "Check status of slave tasks"
-          },
-          {
-            "name": "abort",
-            "description": "Abort current execution"
-          }
-        ]
+        "fullName": "Orka",
+        "description": "Master AI orchestrator for multi-agent coordination",
+        "isSticky": true
       }
     ],
     "commands": [
@@ -63,8 +53,18 @@
         "orka.master.cli": {
           "type": "string",
           "default": "claude",
-          "enum": ["claude", "codex", "gemini"],
-          "description": "Master CLI to use for planning and orchestration"
+          "description": "Executable name or absolute path for the master CLI (defaults to 'claude')."
+        },
+        "orka.master.model": {
+          "type": "string",
+          "default": "",
+          "description": "Optional model id/alias for the master CLI. Leave empty to use CLI default."
+        },
+        "orka.master.maxTurns": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Optional limit of agentic turns (--max-turns). 0 means do not pass the flag."
         },
         "orka.slaves.available": {
           "type": "array",
@@ -89,6 +89,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show terminal output for master and slaves"
+        },
+        "orka.chat.showConfigOnStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Print effective master CLI configuration at the start of each @orka chat request"
         }
       }
     }

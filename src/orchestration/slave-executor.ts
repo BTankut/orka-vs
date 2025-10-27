@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { stripTerminalNoise } from '../util/terminal';
 import {
   AgentType,
   SlaveTask,
@@ -96,7 +97,7 @@ export class SlaveExecutor {
     const stream = execution.read();
 
     for await (const data of stream) {
-      output += data;
+      output += stripTerminalNoise(data);
     }
 
     // Wait for completion
@@ -159,7 +160,7 @@ export class SlaveExecutor {
     const stream = execution.read();
 
     for await (const data of stream) {
-      output += data;
+      output += stripTerminalNoise(data);
     }
 
     // Wait for completion
@@ -206,7 +207,7 @@ export class SlaveExecutor {
     const stream = execution.read();
 
     for await (const data of stream) {
-      output += data;
+      output += stripTerminalNoise(data);
     }
 
     // Wait for completion

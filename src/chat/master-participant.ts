@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { MasterCLI } from '../cli/master-cli';
 import { SlaveExecutor } from '../orchestration/slave-executor';
 import { handleMasterToolCall } from '../orchestration/tool-handler';
+import { outputChannel } from '../extension';
 
 /**
  * Register the master chat participant
@@ -9,71 +10,131 @@ import { handleMasterToolCall } from '../orchestration/tool-handler';
 export function registerMasterParticipant(
   context: vscode.ExtensionContext
 ): vscode.Disposable {
+  console.log('[registerMasterParticipant] Starting registration...');
+
   // Get master CLI from config
   const masterCLI = getMasterCLI();
+  console.log('[registerMasterParticipant] Master CLI created');
+
   const slaveExecutor = new SlaveExecutor();
+  console.log('[registerMasterParticipant] Slave executor created');
+
+  console.log('[registerMasterParticipant] Creating chat participant with ID: orka.master');
+
+  const handler: vscode.ChatRequestHandler = async (request, context, stream, token) => {
+    outputChannel.appendLine('');
+    outputChannel.appendLine('=== Chat Request Received ===');
+    outputChannel.appendLine(`Prompt: ${request.prompt}`);
+    console.log('[ChatParticipant] Request received:', request.prompt);
+
+    const projectPath =
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+    outputChannel.appendLine(`Project path: ${projectPath || 'NONE'}`);
+    console.log('[ChatParticipant] Project path:', projectPath);
+
+    if (!projectPath) {
+      outputChannel.appendLine('✗ No workspace folder open!');
+      console.log('[ChatParticipant] No workspace folder!');
+      stream.markdown('❌ No workspace folder is open. Please open a project folder.');
+      return { metadata: { command: '' } };
+    }
+
+    // Extract session ID from chat history
+    const sessionId = extractSessionId(context.history) || undefined;
+    outputChannel.appendLine(`Session ID: ${sessionId || 'none'}`);
+    console.log('[ChatParticipant] Session ID:', sessionId);
+
+    // Handle slash commands (from API or plain text '/...')
+    const parsedCommand = request.command || parseSlashCommand(request.prompt);
+    if (parsedCommand) {
+      outputChannel.appendLine(`Handling slash command: /${parsedCommand}`);
+      console.log('[ChatParticipant] Slash command:', parsedCommand);
+      await handleSlashCommand(parsedCommand, slaveExecutor, stream, sessionId);
+      return { metadata: { command: '' } };
+    }
+
+    // Optionally show effective config
+    const showCfg = vscode.workspace.getConfiguration('orka').get<boolean>('chat.showConfigOnStart', false);
+    if (showCfg) {
+      const cfg = getEffectiveMasterConfig(sessionId);
+      stream.markdown(formatConfigMarkdown(cfg));
+    }
+
+    // Execute master CLI
+    outputChannel.appendLine('Calling masterCLI.execute()...');
+    console.log('[ChatParticipant] Calling masterCLI.execute()...');
+    let newSessionId: string | undefined;
+    try {
+      let streamedText = '';
+      await masterCLI.execute({
+        projectPath: projectPath!, // Safe because we checked above
+        sessionId,
+        command: request.prompt,
+        onOutput: (data) => {
+          const text = typeof data === 'string' ? data : JSON.stringify(data);
+          streamedText += text;
+          outputChannel.append(`[onOutput] ${text}\n`);
+          stream.markdown(text);
+        },
+        onToolCall: async (tool) => {
+          return await handleMasterToolCall(tool, slaveExecutor, stream);
+        },
+        onProgress: (status) => {
+          stream.progress(status);
+        },
+        onSession: (sid) => {
+          newSessionId = sid;
+        },
+        token,
+      });
+      if (!streamedText.trim()) {
+        stream.markdown('*(master CLI produced no textual output)*');
+      }
+    } catch (error) {
+      outputChannel.appendLine('✗ Error caught:');
+      outputChannel.appendLine(`  ${String(error)}`);
+      console.log('[ChatParticipant] Error caught:', error);
+      stream.markdown(`\n\n❌ Error: ${String(error)}\n`);
+
+      // Show helpful message if shell integration is not available
+      if (String(error).includes('Shell integration')) {
+        stream.markdown(
+          '\n**Tip:** Shell integration is required. Ensure you are using a supported shell (bash, zsh, pwsh) and VS Code >= 1.93.\n'
+        );
+      }
+    }
+
+    outputChannel.appendLine('Handler completed');
+    outputChannel.appendLine('');
+    console.log('[ChatParticipant] Handler completed');
+
+    return { metadata: { command: '', sessionId: newSessionId || sessionId || '' } } as any;
+  };
 
   const participant = vscode.chat.createChatParticipant(
     'orka.master',
-    async (request, chatContext, stream, token) => {
-      const projectPath =
-        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-      if (!projectPath) {
-        stream.markdown('❌ No workspace folder is open. Please open a project folder.');
-        return;
-      }
-
-      // Extract session ID from chat history
-      const sessionId = extractSessionId(chatContext.history);
-
-      // Handle slash commands
-      if (request.command) {
-        await handleSlashCommand(request.command, slaveExecutor, stream);
-        return;
-      }
-
-      // Execute master CLI
-      try {
-        await masterCLI.execute({
-          projectPath,
-          sessionId,
-          command: request.prompt,
-          onOutput: (data) => {
-            stream.markdown(data);
-          },
-          onToolCall: async (tool) => {
-            return await handleMasterToolCall(tool, slaveExecutor, stream);
-          },
-          onProgress: (status) => {
-            stream.progress(status);
-          },
-          token,
-        });
-      } catch (error) {
-        stream.markdown(`\n\n❌ Error: ${String(error)}\n`);
-
-        // Show helpful message if shell integration is not available
-        if (String(error).includes('Shell integration')) {
-          stream.markdown(
-            '\n**Tip:** Shell integration is required. Ensure you are using a supported shell (bash, zsh, pwsh) and VS Code >= 1.93.\n'
-          );
-        }
-      }
-    }
+    handler
   );
+
+  console.log('[registerMasterParticipant] Participant created:', participant);
 
   // Set participant metadata
   participant.iconPath = vscode.Uri.joinPath(
     context.extensionUri,
     'resources',
-    'icon.png'
+    'icon.svg'
   );
+
+  console.log('[registerMasterParticipant] Icon path set:', participant.iconPath);
 
   // Register disposables
   context.subscriptions.push(participant);
   context.subscriptions.push(slaveExecutor);
   context.subscriptions.push(masterCLI);
+
+  console.log('[registerMasterParticipant] Participant registered in context.subscriptions');
+  console.log('[registerMasterParticipant] Registration complete!');
 
   return participant;
 }
@@ -108,13 +169,22 @@ function extractSessionId(
   return undefined;
 }
 
+function parseSlashCommand(prompt?: string): string | undefined {
+  if (!prompt) return undefined;
+  const trimmed = prompt.trim();
+  if (!trimmed.startsWith('/')) return undefined;
+  const token = trimmed.slice(1).split(/\s+/)[0];
+  return token || undefined;
+}
+
 /**
  * Handle slash commands
  */
 async function handleSlashCommand(
   command: string,
   slaveExecutor: SlaveExecutor,
-  stream: vscode.ChatResponseStream
+  stream: vscode.ChatResponseStream,
+  sessionId?: string
 ): Promise<void> {
   switch (command) {
     case 'status':
@@ -123,6 +193,11 @@ async function handleSlashCommand(
 
     case 'abort':
       stream.markdown('⚠️ Use the stop button in the chat to abort execution.');
+      break;
+
+    case 'config':
+      const cfg = getEffectiveMasterConfig(sessionId);
+      stream.markdown(formatConfigMarkdown(cfg));
       break;
 
     default:
@@ -182,4 +257,46 @@ async function showSlaveStatus(
     });
     stream.markdown('\n');
   }
+}
+
+type EffectiveMasterConfig = {
+  cli: string;
+  model: string;
+  thinking: 'yes' | 'no' | 'unknown';
+  maxTurns: number;
+  terminalVisible: boolean;
+  sessionId?: string;
+};
+
+function getEffectiveMasterConfig(sessionId?: string): EffectiveMasterConfig {
+  const cfg = vscode.workspace.getConfiguration('orka');
+  const cli = cfg.get<string>('master.cli', 'claude');
+  const model = cfg.get<string>('master.model', '');
+  const maxTurns = cfg.get<number>('master.maxTurns', 0);
+  const terminalVisible = cfg.get<boolean>('terminal.visible', true);
+
+  const thinking: EffectiveMasterConfig['thinking'] = /thinking/i.test(model)
+    ? 'yes'
+    : model ? 'no' : 'unknown';
+
+  return {
+    cli,
+    model,
+    thinking,
+    maxTurns,
+    terminalVisible,
+    sessionId,
+  };
+}
+
+function formatConfigMarkdown(cfg: EffectiveMasterConfig): string {
+  return [
+    '### ⚙️ Orka Runtime Config',
+    `- CLI: ${cfg.cli}`,
+    `- Model: ${cfg.model}`,
+    `- Thinking: ${cfg.thinking}`,
+    `- Max turns: ${cfg.maxTurns}`,
+    `- Terminal visible: ${cfg.terminalVisible}`,
+    `- Session: ${cfg.sessionId ?? 'none'}`,
+  ].join('\n');
 }

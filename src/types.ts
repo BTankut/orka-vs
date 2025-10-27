@@ -52,6 +52,7 @@ export interface MasterExecutionOptions {
   onOutput: (data: string) => void;
   onToolCall: (tool: ToolCall) => Promise<ToolResult>;
   onProgress: (status: string) => void;
+  onSession?: (sessionId: string) => void;
   token?: vscode.CancellationToken;
 }
 

@@ -5,17 +5,37 @@ import { MasterCLI } from './cli/master-cli';
 import { SlaveExecutor } from './orchestration/slave-executor';
 
 let telegramBridge: TelegramBridge | undefined;
+export let outputChannel: vscode.OutputChannel;
 
 /**
  * Extension activation
  */
 export function activate(context: vscode.ExtensionContext) {
+  // Create output channel
+  outputChannel = vscode.window.createOutputChannel('Orka VS Debug');
+  context.subscriptions.push(outputChannel);
+
+  outputChannel.appendLine('=== Orka VS Extension Activating ===');
+  outputChannel.show(); // Auto-show on activation
   console.log('Orka VS extension is activating...');
 
   // Register master chat participant
-  registerMasterParticipant(context);
+  outputChannel.appendLine('Registering master chat participant...');
+  console.log('Registering master chat participant...');
+  try {
+    const participant = registerMasterParticipant(context);
+    outputChannel.appendLine('✓ Master chat participant registered successfully');
+    outputChannel.appendLine(`  Participant ID: orka.master`);
+    console.log('Master chat participant registered successfully:', participant);
+  } catch (error) {
+    outputChannel.appendLine('✗ Failed to register master chat participant:');
+    outputChannel.appendLine(`  Error: ${String(error)}`);
+    console.error('Failed to register master chat participant:', error);
+  }
 
   // Register commands
+  outputChannel.appendLine('Registering commands...');
+  console.log('Registering commands...');
   registerCommands(context);
 
   // Start Telegram bridge if enabled
@@ -30,6 +50,8 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  outputChannel.appendLine('=== Orka VS Extension Activated Successfully ===');
+  outputChannel.appendLine('');
   console.log('Orka VS extension activated successfully!');
 }
 
