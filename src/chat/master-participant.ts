@@ -43,7 +43,19 @@ export function registerMasterParticipant(
     // Extract session ID from chat history
     const sessionId = extractSessionId(context.history) || undefined;
     outputChannel.appendLine(`Session ID: ${sessionId || 'none'}`);
-    console.log('[ChatParticipant] Session ID:', sessionId);
+    console.log('[ChatParticipant] Session ID from history:', sessionId);
+    console.log('[ChatParticipant] History length:', context.history.length);
+
+    // Debug: show last response metadata
+    if (context.history.length > 0) {
+      const lastTurn = context.history[context.history.length - 1];
+      console.log('[ChatParticipant] Last turn type:', lastTurn instanceof vscode.ChatResponseTurn ? 'Response' : 'Request');
+      if (lastTurn instanceof vscode.ChatResponseTurn) {
+        console.log('[ChatParticipant] Last turn participant:', lastTurn.participant);
+        const metadata = lastTurn.result?.metadata;
+        console.log('[ChatParticipant] Last response metadata:', JSON.stringify(metadata));
+      }
+    }
 
     // Handle slash commands (from API or plain text '/...')
     const parsedCommand = request.command || parseSlashCommand(request.prompt);
@@ -84,6 +96,7 @@ export function registerMasterParticipant(
           stream.progress(status);
         },
         onSession: (sid) => {
+          console.log('[ChatParticipant] ✅ Session ID received from MasterCLI:', sid);
           newSessionId = sid;
         },
         token,
@@ -109,7 +122,10 @@ export function registerMasterParticipant(
     outputChannel.appendLine('');
     console.log('[ChatParticipant] Handler completed');
 
-    return { metadata: { command: '', sessionId: newSessionId || sessionId || '' } } as any;
+    const finalSessionId = newSessionId || sessionId || '';
+    console.log('[ChatParticipant] Returning metadata with session ID:', finalSessionId);
+
+    return { metadata: { command: '', sessionId: finalSessionId } } as any;
   };
 
   const participant = vscode.chat.createChatParticipant(
@@ -160,7 +176,8 @@ function extractSessionId(
   for (let i = history.length - 1; i >= 0; i--) {
     const turn = history[i];
     if (turn instanceof vscode.ChatResponseTurn && turn.participant === 'orka.master') {
-      const metadata = (turn as any).metadata;
+      // Metadata is stored in turn.result.metadata (not turn.metadata)
+      const metadata = turn.result?.metadata;
       if (metadata?.sessionId) {
         return metadata.sessionId;
       }

@@ -40,6 +40,11 @@ export class MasterCLI {
       console.log('[MasterCLI] Terminal created:', this.terminal.name);
     }
 
+    // Log current working directory from shell integration
+    if (this.terminal.shellIntegration?.cwd) {
+      console.log('[MasterCLI] Terminal CWD:', this.terminal.shellIntegration.cwd.fsPath);
+    }
+
     // Wait for shell integration to be ready
     console.log('[MasterCLI] Waiting for shell integration...');
     await this.waitForShellIntegration(this.terminal);
@@ -69,6 +74,9 @@ export class MasterCLI {
 
   /**
    * Build command arguments for master CLI
+   *
+   * Based on orka_ui pattern: uses --print, --output-format stream-json, --verbose
+   * and --resume for session continuity
    */
   private buildCommandArgs(options: MasterExecutionOptions): string[] {
     const cfg = vscode.workspace.getConfiguration('orka');
@@ -78,15 +86,29 @@ export class MasterCLI {
     const args: string[] = [];
 
     if (this.cliCommand === 'claude') {
-      args.push('--print');
-      args.push('--output-format', 'stream-json');
-      // stream-json in print mode requires --verbose; force it on
-      args.push('--verbose');
-      if (model) args.push('--model', this.escapeShellArg(model));
-      if (typeof maxTurns === 'number' && maxTurns > 0) args.push('--max-turns', String(maxTurns));
+      // Resume if we have a session (orka_ui pattern)
       if (options.sessionId) {
         args.push('--resume', this.escapeShellArg(options.sessionId));
+        console.log('[MasterCLI] Resuming session:', options.sessionId);
       }
+
+      // Basic flags (orka_ui pattern)
+      args.push('--output-format', 'stream-json');
+      args.push('--verbose');
+
+      // Model for new sessions only
+      if (!options.sessionId && model) {
+        args.push('--model', this.escapeShellArg(model));
+      }
+
+      // Max turns
+      if (typeof maxTurns === 'number' && maxTurns > 0) {
+        args.push('--max-turns', String(maxTurns));
+      }
+
+      // Print flag with command
+      args.push('--print');
+      args.push('--');
     }
 
     // Add the user command last
@@ -235,38 +257,29 @@ export class MasterCLI {
 
     switch (message.type) {
       case 'stream_event':
-        // Handle wrapped partials from some CLIs
-        if (message.event?.type === 'content_block_delta' && message.event?.delta?.type === 'text_delta' && message.event?.delta?.text) {
-          options.onOutput(message.event.delta.text);
-        }
+        // IGNORE wrapped events - they duplicate content_block_delta
+        // Just capture session ID if present
         if (message.session_id && options.onSession) {
           options.onSession(message.session_id);
         }
+        // Do NOT output text here - will be handled by content_block_delta
         break;
 
       case 'assistant':
-        // Claude Code CLI format: assistant message with content (final summary)
-        // Fallback: if content is present, emit it to avoid truncation
-        if (message.message?.content) {
-          options.onOutput(this.flattenContent(message.message.content));
-        } else if (Array.isArray(message.content)) {
-          for (const block of message.content) {
-            options.onOutput(this.flattenContent(block));
-          }
-        }
+        // Claude Code CLI format: assistant message with content
+        // SKIP text output here - text will come from 'result' message to avoid duplicates
+        // Only capture session ID
         if (message.session_id && options.onSession) {
           options.onSession(message.session_id);
         }
         break;
 
       case 'result':
-        // Claude Code CLI format: final result summary
+        // Claude Code CLI format: final result summary (contains full response text)
+        // This is the PRIMARY source of text output (matches orka_ui pattern)
         options.onOutput(this.flattenContent(message.result));
-        if (message.is_error) {
-          options.onOutput(`\n\n❌ Error: ${message.result}`);
-        } else {
-          options.onOutput('\n\n✅ Task completed');
-        }
+
+        // Capture session ID
         if (message.session_id && options.onSession) {
           options.onSession(message.session_id);
         }
@@ -305,8 +318,16 @@ export class MasterCLI {
       case 'system':
         // System messages (init, etc.)
         console.log('[MasterCLI] System message:', message.subtype);
-        if (message.session_id && options.onSession) {
-          options.onSession(message.session_id);
+        if (message.session_id) {
+          console.log('[MasterCLI] ✅ Session ID captured from system message:', message.session_id);
+          if (options.onSession) {
+            options.onSession(message.session_id);
+            console.log('[MasterCLI] ✅ onSession callback called');
+          } else {
+            console.log('[MasterCLI] ⚠️ onSession callback is undefined!');
+          }
+        } else {
+          console.log('[MasterCLI] ⚠️ No session_id in system message');
         }
         break;
 
