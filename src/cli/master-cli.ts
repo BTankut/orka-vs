@@ -50,13 +50,20 @@ export class MasterCLI {
     await this.waitForShellIntegration(this.terminal);
     console.log('[MasterCLI] Shell integration ready!');
 
-    // Build command arguments (quote values for shell)
+    // Build command arguments for interactive session
     const args = this.buildCommandArgs(options);
     const commandLine = `${this.cliCommand} ${args.join(' ')}`;
     console.log('[MasterCLI] Terminal command:', commandLine);
 
-    // Execute command
+    // Execute command to start interactive Claude session
     this.currentExecution = await this.terminal.shellIntegration!.executeCommand(commandLine);
+
+    // Give Claude a moment to initialize
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Send the user's command via stdin
+    console.log('[MasterCLI] Sending command via stdin:', options.command);
+    this.terminal.sendText(options.command);
 
     // Provide stdin writer for tools
     this.stdinWrite = (data: string) => this.terminal?.sendText(data);
@@ -86,13 +93,13 @@ export class MasterCLI {
     const args: string[] = [];
 
     if (this.cliCommand === 'claude') {
-      // Resume if we have a session (orka_ui pattern)
+      // Resume if we have a session
       if (options.sessionId) {
         args.push('--resume', this.escapeShellArg(options.sessionId));
         console.log('[MasterCLI] Resuming session:', options.sessionId);
       }
 
-      // Basic flags (orka_ui pattern)
+      // Basic flags for interactive mode with JSON streaming
       args.push('--output-format', 'stream-json');
       args.push('--verbose');
 
@@ -106,13 +113,9 @@ export class MasterCLI {
         args.push('--max-turns', String(maxTurns));
       }
 
-      // Print flag with command
-      args.push('--print');
-      args.push('--');
+      // NO --print flag - we'll use interactive mode and send command via stdin
     }
 
-    // Add the user command last
-    args.push(this.escapeShellArg(options.command));
     return args;
   }
 
@@ -227,6 +230,10 @@ export class MasterCLI {
         console.log('[MasterCLI] trailing non-JSON:', tail.slice(0, 200));
       }
     }
+
+    // Exit the interactive session after this turn
+    console.log('[MasterCLI] Sending exit command to close session');
+    this.terminal?.sendText('exit');
 
     // Wait for completion
     await new Promise<void>((resolve) => {
