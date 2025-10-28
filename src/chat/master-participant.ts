@@ -58,7 +58,13 @@ export function registerMasterParticipant(
     }
 
     // All slash commands are passed through to Claude CLI
-    // No Orka-specific slash commands to avoid conflicts with Claude CLI's native commands
+    // Build full command with slash command prefix if present
+    const fullCommand = request.command
+      ? `/${request.command} ${request.prompt || ''}`.trim()
+      : request.prompt;
+
+    outputChannel.appendLine(`Command: ${fullCommand}`);
+    console.log('[ChatParticipant] Full command:', fullCommand);
 
     // Execute master CLI
     outputChannel.appendLine('Calling masterCLI.execute()...');
@@ -69,7 +75,7 @@ export function registerMasterParticipant(
       await masterCLI.execute({
         projectPath: projectPath!, // Safe because we checked above
         sessionId,
-        command: request.prompt,
+        command: fullCommand,
         onOutput: (data) => {
           const text = typeof data === 'string' ? data : JSON.stringify(data);
           streamedText += text;
